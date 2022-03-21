@@ -50,6 +50,7 @@ class SequenceClassificationExplainer(BaseExplainer):
             custom_labels (List[str], optional): Applies custom labels to label2id and id2label configs.
                                                  Labels must be same length as the base model configs' labels.
                                                  Labels and ids are applied index-wise. Defaults to None.
+            custom_architecture: whether using a custom module. [Chris D: we've added this functionality].
 
         Raises:
             AttributionTypeNotSupportedError:
@@ -76,6 +77,7 @@ class SequenceClassificationExplainer(BaseExplainer):
 
         self.attributions: Union[None, LIGAttributions] = None
         self.input_ids: torch.Tensor = torch.Tensor()
+        self.paragraph_input_ids: torch.Tensor = torch.Tensor()
 
         self._single_node_output = False
 
@@ -106,7 +108,15 @@ class SequenceClassificationExplainer(BaseExplainer):
         "Returns predicted class index (int) for model with last calculated `input_ids`"
         if len(self.input_ids) > 0:
             # we call this before _forward() so it has to be calculated twice
-            preds = self.model(self.input_ids)[0]
+            if self.paragraph:
+                preds = self.model(
+                    self.sent_ids[0].unsqueeze(0),
+                    self.attention_mask_sent[0].unsqueeze(0),
+                    self.paragraph_ids[0].unsqueeze(0),
+                    self.attention_mask_para[0].unsqueeze(0)
+                )[0]
+            else:
+                preds = self.model(self.input_ids)[0]
             self.pred_class = torch.argmax(torch.softmax(preds, dim=0)[0])
             return torch.argmax(torch.softmax(preds, dim=1)[0]).cpu().detach().numpy()
 
@@ -172,7 +182,6 @@ class SequenceClassificationExplainer(BaseExplainer):
     def _forward(  # type: ignore
         self,
         input_ids: torch.Tensor,
-        position_ids: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
     ):
 
@@ -185,7 +194,7 @@ class SequenceClassificationExplainer(BaseExplainer):
             preds = preds[0]
 
         else:
-            preds = self.model(input_ids, attention_mask)[0]
+            preds = self.model(input_ids = input_ids, attention_mask = attention_mask)[0]
 
         # if it is a single output node
         if len(preds[0]) == 1:
@@ -196,7 +205,15 @@ class SequenceClassificationExplainer(BaseExplainer):
         self.pred_probs = torch.softmax(preds, dim=1)[0][self.selected_index]
         return torch.softmax(preds, dim=1)[:, self.selected_index]
 
-    def _calculate_attributions(self, embeddings: Embedding, index: int = None, class_name: str = None):  # type: ignore
+    def _calculate_attributions(
+            self,
+            embeddings: Embedding,
+            index: int = None, class_name: str = None
+        ):  # type: ignore
+        """
+        Perform Integrated Gradients, Shapley method, etc for calculating the extent to which the input words affect
+        the output of self.model.
+        """
         (
             self.input_ids,
             self.ref_input_ids,
@@ -209,6 +226,15 @@ class SequenceClassificationExplainer(BaseExplainer):
         ) = self._make_input_reference_position_id_pair(self.input_ids)
 
         self.attention_mask = self._make_attention_mask(self.input_ids)
+        self.sent_ids, self.paragraph_ids, self.attention_mask_sent, self.attention_mask_para = (None, None, None, None)
+        if self.paragraph:
+            encoded_sentence, encoded_paragraph = (self.tokenizer.encode_plus(text, padding="max_length", max_length=12) for
+                                                   text in (self.text, self.paragraph))
+
+            self.sent_ids = torch.Tensor(encoded_sentence["input_ids"]).view(1, -1)[0],
+            self.paragraph_ids = torch.Tensor(encoded_paragraph["input_ids"]).view(1, -1)[0],
+            self.attention_mask_sent = torch.Tensor(encoded_sentence["attention_mask"]).view(1, -1)[0],
+            self.attention_mask_para = torch.Tensor(encoded_paragraph["attention_mask"]).view(1, -1)[0],
 
         if index is not None:
             self.selected_index = index
@@ -236,6 +262,10 @@ class SequenceClassificationExplainer(BaseExplainer):
             ref_position_ids=self.ref_position_ids,
             internal_batch_size=self.internal_batch_size,
             n_steps=self.n_steps,
+            sent_ids=self.sent_ids,
+            paragraph_ids=self.paragraph_ids,
+            attention_mask_sent=self.attention_mask_sent,
+            attention_mask_para=self.attention_mask_para,
         )
         lig.summarize()
         self.attributions = lig
@@ -243,6 +273,7 @@ class SequenceClassificationExplainer(BaseExplainer):
     def _run(
         self,
         text: str,
+        paragraph: str = None,
         index: int = None,
         class_name: str = None,
         embedding_type: int = None,
@@ -264,6 +295,7 @@ class SequenceClassificationExplainer(BaseExplainer):
                 embeddings = self.word_embeddings
 
         self.text = self._clean_text(text)
+        self.paragraph = self._clean_text(paragraph) if paragraph else None
 
         self._calculate_attributions(embeddings=embeddings, index=index, class_name=class_name)
         return self.word_attributions  # type: ignore
@@ -271,6 +303,7 @@ class SequenceClassificationExplainer(BaseExplainer):
     def __call__(
         self,
         text: str,
+        paragraph: str = None,
         index: int = None,
         class_name: str = None,
         embedding_type: int = 0,
@@ -293,6 +326,7 @@ class SequenceClassificationExplainer(BaseExplainer):
 
         Args:
             text (str): Text to provide attributions for.
+            paragraph (str): Context paragraph for text that's used in Robin's custom contextual models
             index (int, optional): Optional output index to provide attributions for. Defaults to None.
             class_name (str, optional): Optional output class name to provide attributions for. Defaults to None.
             embedding_type (int, optional): The embedding type word(0) or position(1) to calculate attributions for. Defaults to 0.
@@ -311,7 +345,7 @@ class SequenceClassificationExplainer(BaseExplainer):
             self.n_steps = n_steps
         if internal_batch_size:
             self.internal_batch_size = internal_batch_size
-        return self._run(text, index, class_name, embedding_type=embedding_type)
+        return self._run(text, paragraph, index, class_name, embedding_type=embedding_type)
 
     def __str__(self):
         s = f"{self.__class__.__name__}("
