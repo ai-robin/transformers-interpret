@@ -110,10 +110,10 @@ class SequenceClassificationExplainer(BaseExplainer):
             # we call this before _forward() so it has to be calculated twice
             if self.paragraph:
                 preds = self.model(
-                    self.sent_ids[0].unsqueeze(0),
-                    self.attention_mask_sent[0].unsqueeze(0),
-                    self.paragraph_ids[0].unsqueeze(0),
-                    self.attention_mask_para[0].unsqueeze(0)
+                    self.sent_ids.unsqueeze(0),
+                    self.attention_mask_sent.unsqueeze(0),
+                    self.paragraph_ids.unsqueeze(0),
+                    self.attention_mask_para.unsqueeze(0)
                 )[0]
             else:
                 preds = self.model(self.input_ids)[0]
@@ -183,9 +183,18 @@ class SequenceClassificationExplainer(BaseExplainer):
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor = None,
+        paragraph_ids: torch.Tensor = None,
+        paragraph_attention_mask: torch.Tensor = None,
     ):
+        if self.paragraph:
+            preds = self.model(
+                input_ids.unsqueeze(0),
+                attention_mask.unsqueeze(0),
+                paragraph_ids.unsqueeze(0),
+                paragraph_attention_mask.unsqueeze(0),
+            )
 
-        if self.accepts_position_ids:
+        elif self.accepts_position_ids:
             preds = self.model(
                 input_ids,
                 position_ids=position_ids,
@@ -199,6 +208,8 @@ class SequenceClassificationExplainer(BaseExplainer):
         # if it is a single output node
         if len(preds[0]) == 1:
             self._single_node_output = True
+            if isinstance(preds, tuple):
+                preds = preds[0]
             self.pred_probs = torch.sigmoid(preds)[0][0]
             return torch.sigmoid(preds)[:, :]
 
@@ -231,10 +242,14 @@ class SequenceClassificationExplainer(BaseExplainer):
             encoded_sentence, encoded_paragraph = (self.tokenizer.encode_plus(text, padding="max_length", max_length=12) for
                                                    text in (self.text, self.paragraph))
 
-            self.sent_ids = torch.Tensor(encoded_sentence["input_ids"]).view(1, -1)[0],
-            self.paragraph_ids = torch.Tensor(encoded_paragraph["input_ids"]).view(1, -1)[0],
-            self.attention_mask_sent = torch.Tensor(encoded_sentence["attention_mask"]).view(1, -1)[0],
-            self.attention_mask_para = torch.Tensor(encoded_paragraph["attention_mask"]).view(1, -1)[0],
+            self.sent_ids = torch.Tensor(encoded_sentence["input_ids"]).view(1, -1)[0]
+            self.paragraph_ids = torch.Tensor(encoded_paragraph["input_ids"]).view(1, -1)[0]
+            self.attention_mask_sent = torch.Tensor(encoded_sentence["attention_mask"]).view(1, -1)[0]
+            self.attention_mask_para = torch.Tensor(encoded_paragraph["attention_mask"]).view(1, -1)[0]
+
+            # We need to enforce that the shape of the baseline inputs are compatible with our paragraph logic
+            if len(self.ref_input_ids.shape) > 1:
+                self.ref_input_ids = self.ref_input_ids.squeeze(0)
 
         if index is not None:
             self.selected_index = index
