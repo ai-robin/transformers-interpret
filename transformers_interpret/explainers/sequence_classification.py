@@ -12,6 +12,11 @@ from transformers_interpret.errors import (
 )
 
 SUPPORTED_ATTRIBUTION_TYPES = ["lig"]
+PARAGRAPH_MODELS = [
+    "BertForSentenceParagraphClassification",
+    "DebertaForSentenceParagraphClassification",
+    "DistilbertForSentenceParagraphClassification"
+]
 
 
 class SequenceClassificationExplainer(BaseExplainer):
@@ -81,6 +86,8 @@ class SequenceClassificationExplainer(BaseExplainer):
 
         self.internal_batch_size = None
         self.n_steps = 50
+
+        self.using_paragraph_model = model.__class__.__name__ in PARAGRAPH_MODELS
 
     @staticmethod
     def _get_id2label_and_label2id_dict(
@@ -211,7 +218,8 @@ class SequenceClassificationExplainer(BaseExplainer):
         self.attention_mask = self._make_attention_mask(self.input_ids)
 
         self.sent_ids, self.paragraph_ids, self.attention_mask_sent, self.attention_mask_para = (None, None, None, None)
-        if self.paragraph:
+
+        if self.using_paragraph_model:
             encoded_sentence, encoded_paragraph = (self.tokenizer.encode_plus(text, padding="max_length", max_length=12) for
                                                    text in (self.text, self.paragraph))
 
@@ -328,6 +336,9 @@ class SequenceClassificationExplainer(BaseExplainer):
         Returns:
             list: List of tuples containing words and their associated attribution scores.
         """
+        if paragraph and not self.using_paragraph_model:
+            warnings.warn("Paragraph parameter unused due to transformer model not having paragraph context "
+                          "implementation, i.e. like BertForSentenceParagraphClassification does.")
 
         if n_steps:
             self.n_steps = n_steps

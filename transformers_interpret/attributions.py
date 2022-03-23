@@ -49,6 +49,16 @@ class LIGAttributions(Attributions):
 
         self.lig = LayerIntegratedGradients(self.custom_forward, self.embeddings)
 
+        # if paragraph_ids:
+        #     self._attributions, self.delta = self.lig.attribute(
+        #         inputs=sent_ids,
+        #         baselines=self.ref_input_ids,
+        #         return_convergence_delta=True,
+        #         internal_batch_size=self.internal_batch_size,
+        #         additional_forward_args=(attention_mask_sent, paragraph_ids, attention_mask_para),
+        #         n_steps=self.n_steps,
+        #     )
+
         if self.token_type_ids is not None and self.position_ids is not None:
             self._attributions, self.delta = self.lig.attribute(
                 inputs=(self.input_ids, self.token_type_ids, self.position_ids),
