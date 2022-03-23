@@ -210,6 +210,21 @@ class SequenceClassificationExplainer(BaseExplainer):
 
         self.attention_mask = self._make_attention_mask(self.input_ids)
 
+        self.sent_ids, self.paragraph_ids, self.attention_mask_sent, self.attention_mask_para = (None, None, None, None)
+        if self.paragraph:
+            encoded_sentence, encoded_paragraph = (self.tokenizer.encode_plus(text, padding="max_length", max_length=12) for
+                                                   text in (self.text, self.paragraph))
+
+            self.sent_ids = torch.Tensor(encoded_sentence["input_ids"]).view(1, -1)[0]
+            self.paragraph_ids = torch.Tensor(encoded_paragraph["input_ids"]).view(1, -1)[0]
+            self.attention_mask_sent = torch.Tensor(encoded_sentence["attention_mask"]).view(1, -1)[0]
+            self.attention_mask_para = torch.Tensor(encoded_paragraph["attention_mask"]).view(1, -1)[0]
+
+            # We need to enforce that the shape of the baseline inputs are compatible with our paragraph logic
+            # Todo: this could be causing the shape mismatch in the layers
+            if len(self.ref_input_ids.shape) > 1:
+                self.ref_input_ids = self.ref_input_ids.squeeze(0)
+
         if index is not None:
             self.selected_index = index
         elif class_name is not None:
@@ -236,6 +251,10 @@ class SequenceClassificationExplainer(BaseExplainer):
             ref_position_ids=self.ref_position_ids,
             internal_batch_size=self.internal_batch_size,
             n_steps=self.n_steps,
+            sent_ids=self.sent_ids,
+            paragraph_ids=self.paragraph_ids,
+            attention_mask_sent=self.attention_mask_sent,
+            attention_mask_para=self.attention_mask_para,
         )
         lig.summarize()
         self.attributions = lig
@@ -246,6 +265,7 @@ class SequenceClassificationExplainer(BaseExplainer):
         index: int = None,
         class_name: str = None,
         embedding_type: int = None,
+        paragraph: str = None,
     ) -> list:  # type: ignore
         if embedding_type is None:
             embeddings = self.word_embeddings
@@ -264,6 +284,7 @@ class SequenceClassificationExplainer(BaseExplainer):
                 embeddings = self.word_embeddings
 
         self.text = self._clean_text(text)
+        self.paragraph = self._clean_text(paragraph) if paragraph else None
 
         self._calculate_attributions(embeddings=embeddings, index=index, class_name=class_name)
         return self.word_attributions  # type: ignore
@@ -276,6 +297,7 @@ class SequenceClassificationExplainer(BaseExplainer):
         embedding_type: int = 0,
         internal_batch_size: int = None,
         n_steps: int = None,
+        paragraph: str = None,
     ) -> list:
         """
         Calculates attribution for `text` using the model
@@ -311,7 +333,7 @@ class SequenceClassificationExplainer(BaseExplainer):
             self.n_steps = n_steps
         if internal_batch_size:
             self.internal_batch_size = internal_batch_size
-        return self._run(text, index, class_name, embedding_type=embedding_type)
+        return self._run(text, index, class_name, embedding_type=embedding_type, paragraph=paragraph)
 
     def __str__(self):
         s = f"{self.__class__.__name__}("

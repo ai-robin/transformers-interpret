@@ -31,6 +31,10 @@ class LIGAttributions(Attributions):
         ref_position_ids: torch.Tensor = None,
         internal_batch_size: int = None,
         n_steps: int = 50,
+        sent_ids: torch.Tensor = None,
+        paragraph_ids: torch.Tensor = None,
+        attention_mask_sent: torch.Tensor = None,
+        attention_mask_para: torch.Tensor = None,
     ):
         super().__init__(custom_forward, embeddings, tokens)
         self.input_ids = input_ids
